@@ -10,3 +10,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 flask --app app run
 ```
+
+## Database
+
+The app uses a Postgres database on [Neon](https://neon.tech). Create a `.env` file in this folder (it is git-ignored):
+
+```
+DATABASE_URL=postgresql://...      # used by the app
+TEST_DATABASE_URL=postgresql://... # used by smoke_test.py, which wipes its tables
+```
+
+Run the smoke test with `python smoke_test.py`.

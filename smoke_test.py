@@ -1,17 +1,28 @@
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 os.chdir(Path(__file__).resolve().parent)
 sys.path.insert(0, os.getcwd())
 
+from dotenv import load_dotenv
+
+# Run against the test database, never the real one. Set DATABASE_URL before
+# importing app, since app reads it (and creates the tables) on import.
+load_dotenv()
+TEST_DATABASE_URL = os.environ["TEST_DATABASE_URL"]
+if TEST_DATABASE_URL == os.environ.get("DATABASE_URL"):
+    sys.exit("TEST_DATABASE_URL must differ from DATABASE_URL: the smoke test wipes its tables.")
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+
+import psycopg
+
+# Start from empty tables so every run sees the same state.
+with psycopg.connect(TEST_DATABASE_URL) as db:
+    db.execute("DROP TABLE IF EXISTS bookings, users")
+
 import app as appmod
 
-# Use a throwaway DB so the smoke test doesn't touch signup.db.
-tmp = Path(tempfile.mkdtemp()) / "test.db"
-appmod.DATABASE = tmp
-appmod.init_db()
 appmod.app.config["TESTING"] = True
 c = appmod.app.test_client()
 
@@ -43,8 +54,8 @@ r = c.post("/logout", follow_redirects=True)
 assert "Please log in first" in body(r), body(r)
 
 # Password must be hashed, not stored in plain text.
-import sqlite3
-row = sqlite3.connect(tmp).execute("SELECT password_hash FROM users").fetchone()
+with psycopg.connect(TEST_DATABASE_URL) as db:
+    row = db.execute("SELECT password_hash FROM users").fetchone()
 assert row[0] != "pw" and row[0].startswith(("scrypt:", "pbkdf2:")), row
 
 # --- Sign-up sheet ---------------------------------------------------------

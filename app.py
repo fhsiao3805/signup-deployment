@@ -1,7 +1,9 @@
-import sqlite3
+import os
 from functools import wraps
-from pathlib import Path
 
+import psycopg
+from dotenv import load_dotenv
+from psycopg.rows import dict_row
 from flask import (
     Flask,
     flash,
@@ -14,8 +16,10 @@ from flask import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
-BASE_DIR = Path(__file__).resolve().parent
-DATABASE = BASE_DIR / "signup.db"
+# Read settings from .env when running locally. Variables already set in the
+# environment (e.g. on Cloud Run) take precedence over the file.
+load_dotenv()
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 app = Flask(__name__)
 # Replace with a fixed random value (e.g. via an environment variable) before deploying.
@@ -26,8 +30,7 @@ app.config["SECRET_KEY"] = "dev-change-me"
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = sqlite3.Row
+        g.db = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     return g.db
 
 
@@ -39,11 +42,12 @@ def close_db(_exc):
 
 
 def init_db():
-    with sqlite3.connect(DATABASE) as db:
+    # The with-block commits on success and closes the connection.
+    with psycopg.connect(DATABASE_URL) as db:
         db.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL
             )
@@ -52,7 +56,7 @@ def init_db():
         db.execute(
             """
             CREATE TABLE IF NOT EXISTS bookings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 weekday INTEGER NOT NULL,
                 start TEXT NOT NULL,
                 user_id INTEGER NOT NULL REFERENCES users(id),
@@ -115,7 +119,7 @@ def load_current_user():
         g.user = None
     else:
         g.user = get_db().execute(
-            "SELECT id, username FROM users WHERE id = ?", (user_id,)
+            "SELECT id, username FROM users WHERE id = %s", (user_id,)
         ).fetchone()
         if g.user is None:
             session.clear()
@@ -154,11 +158,12 @@ def register():
             db = get_db()
             try:
                 db.execute(
-                    "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                    "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
                     (username, generate_password_hash(password)),
                 )
                 db.commit()
-            except sqlite3.IntegrityError:
+            except psycopg.errors.UniqueViolation:
+                db.rollback()
                 flash(f"Username '{username}' is already taken.")
             else:
                 flash("Account created. You can log in now.")
@@ -174,7 +179,7 @@ def login():
         password = request.form.get("password", "")
 
         user = get_db().execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
+            "SELECT * FROM users WHERE username = %s", (username,)
         ).fetchone()
 
         if user is None or not check_password_hash(user["password_hash"], password):
@@ -244,11 +249,12 @@ def book():
     db = get_db()
     try:
         db.execute(
-            "INSERT INTO bookings (weekday, start, user_id) VALUES (?, ?, ?)",
+            "INSERT INTO bookings (weekday, start, user_id) VALUES (%s, %s, %s)",
             (weekday, start, g.user["id"]),
         )
         db.commit()
-    except sqlite3.IntegrityError:
+    except psycopg.errors.UniqueViolation:
+        db.rollback()
         flash("Sorry, that slot has already been taken.")
     else:
         flash(f"Booked {DAYS[weekday]} at {format_time(start)}.")
@@ -267,7 +273,7 @@ def cancel():
     db = get_db()
     # Only the person who booked a slot may cancel it.
     deleted = db.execute(
-        "DELETE FROM bookings WHERE weekday = ? AND start = ? AND user_id = ?",
+        "DELETE FROM bookings WHERE weekday = %s AND start = %s AND user_id = %s",
         (weekday, start, g.user["id"]),
     ).rowcount
     db.commit()
