@@ -14,6 +14,9 @@ TEST_DATABASE_URL = os.environ["TEST_DATABASE_URL"]
 if TEST_DATABASE_URL == os.environ.get("DATABASE_URL"):
     sys.exit("TEST_DATABASE_URL must differ from DATABASE_URL: the smoke test wipes its tables.")
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+# Fixed test values, so the test doesn't depend on what is in .env.
+os.environ["SECRET_KEY"] = "smoke-test-secret"
+os.environ["ADMIN_USERNAME"] = "alice"
 
 import psycopg
 
@@ -31,6 +34,12 @@ def body(r):
 
 r = c.get("/")
 assert r.status_code == 200 and "not logged in" in body(r), body(r)
+
+# Not on Cloud Run, so the session cookie must not be marked Secure.
+assert appmod.app.config["SESSION_COOKIE_SECURE"] is False
+
+# Registered first, but not named by ADMIN_USERNAME, so not the administrator.
+c.post("/register", data={"username": "early", "password": "pw"})
 
 r = c.post("/register", data={"username": "alice", "password": "pw"}, follow_redirects=True)
 assert "Account created" in body(r), body(r)
@@ -71,7 +80,12 @@ assert "Please log in first" in body(r), body(r)
 
 c.post("/register", data={"username": "bob", "password": "pw"})
 
-# alice registered first, so she is the administrator.
+# early registered first but is not the administrator.
+login("early")
+r = c.get("/sheet")
+assert "You are the administrator" not in body(r), body(r)
+
+# alice is named by ADMIN_USERNAME, so she is the administrator.
 login("alice")
 r = c.get("/sheet")
 assert r.status_code == 200 and "You are the administrator" in body(r), body(r)

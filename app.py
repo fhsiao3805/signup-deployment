@@ -19,11 +19,28 @@ from werkzeug.security import check_password_hash, generate_password_hash
 # Read settings from .env when running locally. Variables already set in the
 # environment (e.g. on Cloud Run) take precedence over the file.
 load_dotenv()
-DATABASE_URL = os.environ["DATABASE_URL"]
+
+
+def required_env(name):
+    """Return an environment variable, or stop the app if it is missing or empty."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(
+            f"Missing setting: {name}. Set it in .env (locally) "
+            f"or as an environment variable (on Cloud Run), then start the app again."
+        )
+    return value
+
+
+DATABASE_URL = required_env("DATABASE_URL")
+SECRET_KEY = required_env("SECRET_KEY")
+ADMIN_USERNAME = required_env("ADMIN_USERNAME")
 
 app = Flask(__name__)
-# Replace with a fixed random value (e.g. via an environment variable) before deploying.
-app.config["SECRET_KEY"] = "dev-change-me"
+app.config["SECRET_KEY"] = SECRET_KEY
+# Cloud Run sets K_SERVICE and serves over HTTPS, so only send the session
+# cookie over HTTPS there. Locally the app runs on plain http://.
+app.config["SESSION_COOKIE_SECURE"] = "K_SERVICE" in os.environ
 
 
 # --- Database helpers -------------------------------------------------------
@@ -103,11 +120,8 @@ def parse_slot(form):
 
 
 def is_admin(user):
-    """The first user who registered is the administrator."""
-    if user is None:
-        return False
-    first = get_db().execute("SELECT MIN(id) AS id FROM users").fetchone()
-    return first["id"] == user["id"]
+    """The administrator is the user named by ADMIN_USERNAME."""
+    return user is not None and user["username"] == ADMIN_USERNAME
 
 
 # --- Auth helpers -----------------------------------------------------------
