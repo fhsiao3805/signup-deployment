@@ -1,0 +1,9 @@
+# Files not uploaded to Cloud Run. Secrets go in Cloud Run env vars, not here.
+.env
+.git/
+.gitignore
+.gcloudignore
+.venv/
+.vscode/
+__pycache__/
+smoke_test.py
